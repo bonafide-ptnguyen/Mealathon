@@ -115,20 +115,23 @@ The app uses Google Firebase for its backend. You need to set up a Firebase proj
         ```firestore
         rules_version = '2';
         service cloud.firestore {
-          match /databases/{database}/documents {
+        match /databases/{database}/documents {
 
-            // Public data for campaigns
-            // Allow any authenticated user to read and write campaigns
-            match /artifacts/{appId}/public/data/campaigns/{campaignId} {
-              allow read, write: if request.auth != null;
-            }
+                // Public data for campaigns
+                // Allow any authenticated user to read campaigns
+                // Allow ANYONE to write (create/update/delete) campaigns for demonstration purposes.
+                // WARNING: This is INSECURE for production apps.
+                match /artifacts/{appId}/public/data/campaigns/{campaignId} {
+                allow read: if request.auth != null;
+                allow write: true; // This allows anyone to write
+                }
 
-            // Private data for user donations
-            // Users can only read and write their own donations
-            match /artifacts/{appId}/users/{userId}/{document=**} {
-              allow read, write: if request.auth != null && request.auth.uid == userId;
+                // Private data for user donations
+                // Users can only read and write their own donations
+                match /artifacts/{appId}/users/{userId}/{document=**} {
+                allow read, write: if request.auth != null && request.auth.uid == userId;
+                }
             }
-          }
         }
         ```
 
