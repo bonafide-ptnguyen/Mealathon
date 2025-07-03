@@ -448,11 +448,12 @@ const ProviderDashboard = ({ onBack }) => {
         try {
             const campaignDocRef = doc(db, `artifacts/${appId}/public/data/campaigns`, selectedCampaignToManage.id);
             const currentUpdates = selectedCampaignToManage.distributionUpdates || [];
-            const updatedUpdates = [...currentUpdates, { message: newUpdateMessage.trim(), date: serverTimestamp() }];
+            // FIX: Use new Date() instead of serverTimestamp() directly in array elements
+            const updatedUpdates = [...currentUpdates, { message: newUpdateMessage.trim(), date: new Date() }];
 
             await updateDoc(campaignDocRef, {
                 distributionUpdates: updatedUpdates,
-                totalMealsProvided: selectedCampaignToManage.costPerMeal > 0 ? Math.floor(selectedCampaignToverage.totalDonations / selectedCampaignToManage.costPerMeal) : 0,
+                totalMealsProvided: selectedCampaignToManage.costPerMeal > 0 ? Math.floor(selectedCampaignToManage.totalDonations / selectedCampaignToManage.costPerMeal) : 0,
                 status: 'distributed' // Mark as distributed once an update is added
             });
 
@@ -790,7 +791,27 @@ const App = () => {
         <AppContext.Provider value={{ db, auth, userId, isAuthReady, showModal: handleShowModal }}>
             <div className="font-sans antialiased bg-gray-100 text-gray-900">
                 <header className="bg-white shadow-md p-4 flex justify-between items-center">
-                    <h1 className="text-3xl font-extrabold text-blue-700">Mealathon</h1>
+                    <div className="flex items-center"> {/* Flex container for logo and title */}
+                        {/* SVG Logo for Mealathon */}
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            className="h-8 w-8 text-blue-500 mr-2" // Tailwind classes for size and color
+                        >
+                            <path
+                                fillRule="evenodd"
+                                d="M11.47 2.47a.75.75 0 0 1 1.06 0l3.75 3.75a.75.75 0 0 1-1.06 1.06L12 4.06V16.5a.75.75 0 0 1-1.5 0V4.06L8.78 7.28a.75.75 0 0 1-1.06-1.06l3.75-3.75Z"
+                                clipRule="evenodd"
+                            />
+                            <path
+                                fillRule="evenodd"
+                                d="M2.25 13.5a.75.75 0 0 1 .75.75V19.5a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-5.25a.75.75 0 0 1 1.5 0V19.5a4.5 4.5 0 0 1-4.5 4.5H6a4.5 4.5 0 0 1-4.5-4.5V14.25a.75.75 0 0 1 .75-.75Z"
+                                clipRule="evenodd"
+                            />
+                        </svg>
+                        <h1 className="text-3xl font-extrabold text-blue-700">Mealathon</h1>
+                    </div>
                     <nav className="space-x-4">
                         <button
                             onClick={handleBackToHome}
