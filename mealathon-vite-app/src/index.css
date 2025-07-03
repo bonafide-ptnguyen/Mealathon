@@ -1,0 +1,17 @@
+/* index.css */
+@import "tailwindcss";
+
+/*
+  Remove all other default styles from :root, body, h1, a, button, etc.
+  These default styles were overriding Tailwind's utility classes.
+*/
+
+/* You can keep or add very minimal global styles here if absolutely necessary,
+   but generally, use Tailwind utility classes directly in your JSX. */
+body {
+  font-family: "Inter", sans-serif; /* Recommended font, or remove if you prefer Tailwind's default */
+  /* Tailwind utility classes (e.g., bg-gray-100, text-gray-900) will now apply from App.jsx */
+}
+
+/* No other CSS rules should be here unless they are custom components
+   or base styles explicitly designed not to conflict with Tailwind. */
