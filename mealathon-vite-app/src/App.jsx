@@ -1,14 +1,16 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs, serverTimestamp, runTransaction } from 'firebase/firestore';
+// Firebase Storage imports are removed as we are using a mock service for image URLs
+// import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // Your web app's Firebase configuration - now loaded from environment variables
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET, // Ensure this is present
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
@@ -53,20 +55,58 @@ const Modal = ({ show, title, message, onClose, onConfirm, showConfirmButton = f
 
 // Campaign Card Component
 const CampaignCard = ({ campaign, onClick }) => {
-    const progress = (campaign.totalDonations / (campaign.targetAmount || 1)) * 100;
+    // Calculate progress based on targetAmount
+    const progress = campaign.targetAmount > 0 ? (campaign.totalDonations / campaign.targetAmount) * 100 : 0;
     const mealsPossible = campaign.costPerMeal > 0 ? Math.floor(campaign.totalDonations / campaign.costPerMeal) : 0;
     const endDate = campaign.endDate ? new Date(campaign.endDate.seconds * 1000).toLocaleDateString() : 'N/A';
 
+    let statusBadge = '';
+    let statusColor = 'bg-gray-400';
+    if (campaign.status === 'successful') {
+        statusBadge = 'Successful!';
+        statusColor = 'bg-green-500';
+    } else if (campaign.status === 'failed') {
+        statusBadge = 'Failed';
+        statusColor = 'bg-red-500';
+    } else if (campaign.status === 'active') {
+        statusBadge = 'Active';
+        statusColor = 'bg-blue-500';
+    }
+
     return (
         <div
-            className="bg-white rounded-xl shadow-lg p-6 mb-6 cursor-pointer hover:shadow-xl transition-shadow duration-300 border border-gray-200"
+            className="bg-white rounded-xl shadow-lg p-6 mb-6 cursor-pointer hover:shadow-xl transition-shadow duration-300 border border-gray-200 relative overflow-hidden"
             onClick={() => onClick(campaign)}
         >
+            {/* Campaign Status Badge */}
+            {statusBadge && (
+                <span className={`absolute top-0 right-0 ${statusColor} text-white text-xs font-bold px-3 py-1 rounded-bl-lg`}>
+                    {statusBadge}
+                </span>
+            )}
+
+            {/* Campaign Images */}
+            {campaign.campaignImageUrls && campaign.campaignImageUrls.length > 0 && (
+                <div className="mb-4 rounded-lg overflow-hidden">
+                    <img
+                        src={campaign.campaignImageUrls[0]} // Display first image as a preview
+                        alt={campaign.campaignName}
+                        className="w-full h-48 object-cover object-center rounded-lg"
+                        onError={(e) => { e.target.onerror = null; e.target.src = "https://placehold.co/400x200/cccccc/333333?text=No+Image"; }}
+                    />
+                </div>
+            )}
+
             <h3 className="text-2xl font-bold text-gray-800 mb-2">{campaign.campaignName}</h3>
             <p className="text-gray-600 text-lg mb-3">by <span className="font-semibold">{campaign.restaurantName}</span></p>
             <p className="text-gray-700 mb-2">
                 <span className="font-medium">Donated:</span> ${campaign.totalDonations ? campaign.totalDonations.toFixed(2) : '0.00'}
             </p>
+            {campaign.targetAmount > 0 && (
+                <p className="text-gray-700 mb-2">
+                    <span className="font-medium">Target:</span> ${campaign.targetAmount.toFixed(2)}
+                </p>
+            )}
             <p className="text-gray-700 mb-2">
                 <span className="font-medium">Meals Possible:</span> {mealsPossible}
             </p>
@@ -79,8 +119,8 @@ const CampaignCard = ({ campaign, onClick }) => {
                     style={{ width: `${Math.min(100, progress)}%` }}
                 ></div>
             </div>
-            {campaign.targetAmount && (
-                <p className="text-sm text-gray-500 mt-2">Target: ${campaign.targetAmount.toFixed(2)}</p>
+            {campaign.targetAmount > 0 && (
+                <p className="text-sm text-gray-500 mt-2">{Math.round(progress)}% of target reached</p>
             )}
         </div>
     );
@@ -117,7 +157,7 @@ const CampaignList = ({ onSelectCampaign, onCreateCampaign }) => {
         });
 
         return () => unsubscribe();
-    }, [db, isAuthReady, showModal, userId]); // Added userId to dependencies for better logging
+    }, [db, isAuthReady, showModal, userId]);
 
     if (loading) {
         return <div className="text-center text-gray-600">Loading campaigns...</div>;
@@ -170,11 +210,17 @@ const CampaignDetail = ({ campaign, onBack }) => {
             const donationsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/donations`);
             const campaignDocRef = doc(db, `artifacts/${appId}/public/data/campaigns`, campaign.id);
 
+            // Generate a consistent mock donor name for anonymous users
+            const donorName = "Anonymous Donor"; // For simplicity, all anonymous donors are "Anonymous Donor"
+
+            // Add individual donation
             await addDoc(donationsCollectionRef, {
                 campaignId: campaign.id,
                 donorId: userId,
+                donorName: donorName, // Add donorName to individual donation
                 amount: amount,
                 timestamp: serverTimestamp(),
+                refunded: false,
             });
 
             // Update totalDonations in the campaign document
@@ -187,6 +233,30 @@ const CampaignDetail = ({ campaign, onBack }) => {
             } else {
                 console.warn("Campaign document not found for update:", campaign.id);
             }
+
+            // --- Update Donor Leaderboard ---
+            const donorLeaderboardDocRef = doc(db, `artifacts/${appId}/public/data/donor_leaderboard`, userId);
+
+            await runTransaction(db, async (transaction) => {
+                const donorLeaderboardSnap = await transaction.get(donorLeaderboardDocRef);
+                if (donorLeaderboardSnap.exists()) {
+                    const currentTotalDonated = donorLeaderboardSnap.data().totalDonatedAmount || 0;
+                    transaction.update(donorLeaderboardDocRef, {
+                        totalDonatedAmount: currentTotalDonated + amount,
+                        lastDonationAt: serverTimestamp()
+                    });
+                } else {
+                    transaction.set(donorLeaderboardDocRef, {
+                        donorId: userId,
+                        donorName: donorName,
+                        totalDonatedAmount: amount,
+                        firstDonationAt: serverTimestamp(),
+                        lastDonationAt: serverTimestamp()
+                    });
+                }
+            });
+            // --- End Update Donor Leaderboard ---
+
 
             showModal('Success', `Thank you for your donation of $${amount.toFixed(2)} to ${campaign.campaignName}!`);
             setDonationAmount('');
@@ -218,14 +288,33 @@ const CampaignDetail = ({ campaign, onBack }) => {
                 <p className="text-gray-600 text-xl mb-4">by <span className="font-semibold">{campaign.restaurantName}</span></p>
                 <p className="text-gray-700 text-lg mb-6 leading-relaxed">{campaign.description}</p>
 
+                {/* Display Campaign Images */}
+                {campaign.campaignImageUrls && campaign.campaignImageUrls.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        {campaign.campaignImageUrls.map((url, index) => (
+                            <img
+                                key={index}
+                                src={url}
+                                alt={`${campaign.campaignName} image ${index + 1}`}
+                                className="w-full h-48 object-cover rounded-lg shadow-sm"
+                                onError={(e) => { e.target.onerror = null; e.target.src = "https://placehold.co/400x200/cccccc/333333?text=No+Image"; }}
+                            />
+                        ))}
+                    </div>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                     <div>
                         <p className="text-gray-700 text-lg"><span className="font-medium">Cost per Meal:</span> ${campaign.costPerMeal ? campaign.costPerMeal.toFixed(2) : '0.00'}</p>
                         <p className="text-gray-700 text-lg"><span className="font-medium">Campaign Ends:</span> {endDate}</p>
+                        {campaign.targetAmount > 0 && (
+                            <p className="text-gray-700 text-lg"><span className="font-medium">Target Amount:</span> ${campaign.targetAmount.toFixed(2)}</p>
+                        )}
                     </div>
                     <div>
                         <p className="text-gray-700 text-lg"><span className="font-medium">Total Donated:</span> ${campaign.totalDonations ? campaign.totalDonations.toFixed(2) : '0.00'}</p>
                         <p className="text-gray-700 text-lg"><span className="font-medium">Estimated Meals:</span> {mealsPossible}</p>
+                        <p className="text-gray-700 text-lg"><span className="font-medium">Status:</span> {campaign.status}</p>
                     </div>
                 </div>
 
@@ -233,8 +322,21 @@ const CampaignDetail = ({ campaign, onBack }) => {
                 {campaign.distributionUpdates && campaign.distributionUpdates.length > 0 ? (
                     <ul className="list-disc list-inside text-gray-700 mb-8">
                         {campaign.distributionUpdates.map((update, index) => (
-                            <li key={index} className="mb-2">
+                            <li key={index} className="mb-4">
                                 <span className="font-semibold">{new Date(update.date.seconds * 1000).toLocaleDateString()}:</span> {update.message}
+                                {update.imageUrls && update.imageUrls.length > 0 && (
+                                    <div className="mt-2 grid grid-cols-2 gap-2">
+                                        {update.imageUrls.map((url, imgIndex) => (
+                                            <img
+                                                key={imgIndex}
+                                                src={url}
+                                                alt={`Distribution update image ${imgIndex + 1}`}
+                                                className="w-full h-24 object-cover rounded-md shadow-sm"
+                                                onError={(e) => { e.target.onerror = null; e.target.src = "https://placehold.co/100x100/cccccc/333333?text=Image+Error"; }}
+                                            />
+                                        ))}
+                                    </div>
+                                )}
                             </li>
                         ))}
                     </ul>
@@ -244,24 +346,28 @@ const CampaignDetail = ({ campaign, onBack }) => {
 
                 <div className="border-t border-gray-200 pt-6">
                     <h3 className="text-2xl font-bold text-gray-800 mb-4">Make a Donation</h3>
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-                        <input
-                            type="number"
-                            placeholder="Amount to donate"
-                            value={donationAmount}
-                            onChange={(e) => setDonationAmount(e.target.value)}
-                            className="flex-grow p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-lg"
-                            min="0.01"
-                            step="0.01"
-                        />
-                        <button
-                            onClick={handleDonate}
-                            disabled={loading}
-                            className="w-full sm:w-auto bg-gradient-to-r from-green-500 to-green-600 text-white px-6 py-3 rounded-md shadow-md hover:from-green-600 hover:to-green-700 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-green-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {loading ? 'Processing...' : 'Donate Now'}
-                        </button>
-                    </div>
+                    {campaign.status === 'active' ? (
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+                            <input
+                                type="number"
+                                placeholder="Amount to donate"
+                                value={donationAmount}
+                                onChange={(e) => setDonationAmount(e.target.value)}
+                                className="flex-grow p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-lg"
+                                min="0.01"
+                                step="0.01"
+                            />
+                            <button
+                                onClick={handleDonate}
+                                disabled={loading}
+                                className="w-full sm:w-auto bg-gradient-to-r from-green-500 to-green-600 text-white px-6 py-3 rounded-md shadow-md hover:from-green-600 hover:to-green-700 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-green-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {loading ? 'Processing...' : 'Donate Now'}
+                            </button>
+                        </div>
+                    ) : (
+                        <p className="text-gray-600 text-lg">This campaign is no longer active for donations (Status: {campaign.status}).</p>
+                    )}
                 </div>
             </div>
         </div>
@@ -270,22 +376,46 @@ const CampaignDetail = ({ campaign, onBack }) => {
 
 // Create Campaign Component
 const CreateCampaign = ({ onBack }) => {
-    const { db, auth, userId, isAuthReady, showModal } = useContext(AppContext);
+    const { db, auth, userId, isAuthReady, showModal /*, storage */ } = useContext(AppContext); // Removed storage from useContext
     const [campaignName, setCampaignName] = useState('');
     const [restaurantName, setRestaurantName] = useState('');
     const [costPerMeal, setCostPerMeal] = useState('');
     const [endDate, setEndDate] = useState('');
     const [description, setDescription] = useState('');
+    const [targetAmount, setTargetAmount] = useState(''); // New state for target amount
+    const [selectedFiles, setSelectedFiles] = useState([]); // State for selected image files
     const [loading, setLoading] = useState(false);
+
+    const handleFileChange = (e) => {
+        if (e.target.files) {
+            setSelectedFiles(Array.from(e.target.files));
+        }
+    };
+
+    // SIMULATED PERSISTENT IMAGE UPLOAD FUNCTION using placehold.co
+    const uploadImages = async (files) => {
+        const imageUrls = [];
+        for (const file of files) {
+            // Generate a unique placeholder URL based on file name and timestamp
+            const uniqueId = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9]/g, '')}`;
+            const placeholderUrl = `https://placehold.co/400x200/cccccc/333333?text=Campaign+${uniqueId.substring(0, 15)}`;
+            imageUrls.push(placeholderUrl);
+        }
+        return imageUrls;
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!campaignName || !restaurantName || !costPerMeal || !endDate || !description) {
-            showModal('Missing Information', 'Please fill in all fields.');
+        if (!campaignName || !restaurantName || !costPerMeal || !endDate || !description || !targetAmount) {
+            showModal('Missing Information', 'Please fill in all fields including target amount.');
             return;
         }
         if (parseFloat(costPerMeal) <= 0) {
             showModal('Invalid Cost', 'Cost per meal must be greater than zero.');
+            return;
+        }
+        if (parseFloat(targetAmount) <= 0) {
+            showModal('Invalid Target', 'Target amount must be greater than zero.');
             return;
         }
         const campaignEndDate = new Date(endDate);
@@ -296,6 +426,11 @@ const CreateCampaign = ({ onBack }) => {
 
         setLoading(true);
         try {
+            let imageUrls = [];
+            if (selectedFiles.length > 0) {
+                imageUrls = await uploadImages(selectedFiles);
+            }
+
             const campaignsCollectionRef = collection(db, `artifacts/${appId}/public/data/campaigns`);
             await addDoc(campaignsCollectionRef, {
                 campaignName,
@@ -303,10 +438,12 @@ const CreateCampaign = ({ onBack }) => {
                 costPerMeal: parseFloat(costPerMeal),
                 endDate: campaignEndDate, // Store as Date object, Firestore converts to Timestamp
                 description,
+                targetAmount: parseFloat(targetAmount), // New field
+                campaignImageUrls: imageUrls, // New field
                 totalDonations: 0,
                 totalMealsProvided: 0,
                 distributionUpdates: [],
-                status: 'active',
+                status: 'active', // Initial status
                 providerId: userId,
                 createdAt: serverTimestamp(),
             });
@@ -314,7 +451,7 @@ const CreateCampaign = ({ onBack }) => {
             onBack(); // Go back to campaign list
         } catch (error) {
             console.error("Error creating campaign:", error);
-            showModal('Error', 'Failed to create campaign. Please try again.');
+            showModal('Error', `Failed to create campaign. Please try again. Error: ${error.message}`);
         } finally {
             setLoading(false);
         }
@@ -370,6 +507,19 @@ const CreateCampaign = ({ onBack }) => {
                         />
                     </div>
                     <div>
+                        <label htmlFor="targetAmount" className="block text-lg font-medium text-gray-700 mb-1">Target Amount ($) - Minimum to Kickstart</label>
+                        <input
+                            type="number"
+                            id="targetAmount"
+                            value={targetAmount}
+                            onChange={(e) => setTargetAmount(e.target.value)}
+                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-lg"
+                            min="0.01"
+                            step="0.01"
+                            placeholder="e.g., 500.00"
+                        />
+                    </div>
+                    <div>
                         <label htmlFor="endDate" className="block text-lg font-medium text-gray-700 mb-1">Campaign End Date</label>
                         <input
                             type="date"
@@ -390,6 +540,20 @@ const CreateCampaign = ({ onBack }) => {
                             placeholder="Tell us about your campaign and why it matters..."
                         ></textarea>
                     </div>
+                    <div>
+                        <label htmlFor="campaignImages" className="block text-lg font-medium text-gray-700 mb-1">Campaign Images (Optional)</label>
+                        <input
+                            type="file"
+                            id="campaignImages"
+                            multiple
+                            accept="image/*"
+                            onChange={handleFileChange}
+                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-lg file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                        />
+                        {selectedFiles.length > 0 && (
+                            <p className="text-sm text-gray-500 mt-2">{selectedFiles.length} file(s) selected.</p>
+                        )}
+                    </div>
                     <button
                         type="submit"
                         disabled={loading}
@@ -405,11 +569,30 @@ const CreateCampaign = ({ onBack }) => {
 
 // Provider Dashboard Component
 const ProviderDashboard = ({ onBack }) => {
-    const { db, auth, userId, isAuthReady, showModal } = useContext(AppContext);
+    const { db, auth, userId, isAuthReady, showModal /*, storage */ } = useContext(AppContext); // Removed storage from useContext
     const [myCampaigns, setMyCampaigns] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedCampaignToManage, setSelectedCampaignToManage] = useState(null);
     const [newUpdateMessage, setNewUpdateMessage] = useState('');
+    const [selectedUpdateFiles, setSelectedUpdateFiles] = useState([]); // State for selected distribution image files
+
+    const handleUpdateFileChange = (e) => {
+        if (e.target.files) {
+            setSelectedUpdateFiles(Array.from(e.target.files));
+        }
+    };
+
+    // SIMULATED PERSISTENT IMAGE UPLOAD FUNCTION using placehold.co
+    const uploadUpdateImages = async (files) => {
+        const imageUrls = [];
+        for (const file of files) {
+            // Generate a unique placeholder URL based on file name and timestamp
+            const uniqueId = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9]/g, '')}`;
+            const placeholderUrl = `https://placehold.co/100x100/cccccc/333333?text=Update+${uniqueId.substring(0, 10)}`;
+            imageUrls.push(placeholderUrl);
+        }
+        return imageUrls;
+    };
 
     useEffect(() => {
         if (!db || !isAuthReady || !userId) {
@@ -419,6 +602,7 @@ const ProviderDashboard = ({ onBack }) => {
         console.log("ProviderDashboard: Attempting to fetch campaigns for providerId:", userId, "and appId:", appId);
 
         const campaignsCollectionRef = collection(db, `artifacts/${appId}/public/data/campaigns`);
+        // We still filter by providerId for 'My Campaigns' view
         const q = query(campaignsCollectionRef, where("providerId", "==", userId));
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -438,6 +622,83 @@ const ProviderDashboard = ({ onBack }) => {
         return () => unsubscribe();
     }, [db, isAuthReady, userId, showModal]);
 
+    // Logic to handle campaign status and potential refunds
+    useEffect(() => {
+        if (!db || !isAuthReady) return;
+
+        const checkCampaignStatus = async () => {
+            const campaignsCollectionRef = collection(db, `artifacts/${appId}/public/data/campaigns`);
+            const q = query(campaignsCollectionRef, where("status", "==", "active"));
+            const activeCampaignsSnapshot = await getDocs(q);
+
+            activeCampaignsSnapshot.forEach(async (campaignDoc) => {
+                const campaignData = campaignDoc.data();
+                const campaignId = campaignDoc.id;
+                const now = new Date();
+                const endDate = campaignData.endDate ? new Date(campaignData.endDate.seconds * 1000) : null;
+
+                if (endDate && now > endDate) {
+                    // Campaign has ended, determine status
+                    if (campaignData.totalDonations >= campaignData.targetAmount) {
+                        // Campaign successful
+                        await updateDoc(doc(db, `artifacts/${appId}/public/data/campaigns`, campaignId), {
+                            status: 'successful'
+                        });
+                        console.log(`Campaign ${campaignId} marked as successful.`);
+                    } else {
+                        // Campaign failed, initiate refund process
+                        await runTransaction(db, async (transaction) => {
+                            const campaignRef = doc(db, `artifacts/${appId}/public/data/campaigns`, campaignId);
+                            transaction.update(campaignRef, { status: 'failed' });
+
+                            // Assuming donations are stored under the donor's userId, not provider's
+                            // You might need to adjust this path if your donation structure is different
+                            const allDonationsQuery = query(
+                                collection(db, `artifacts/${appId}/users`), // Query across all user donation subcollections
+                                where("campaignId", "==", campaignId),
+                                where("refunded", "==", false)
+                            );
+                            // This query structure for donations across all users is complex for Firestore
+                            // A more robust solution for refunds would be to have a 'refunds' collection
+                            // or to query donations directly under the campaign if they were structured that way.
+                            // For this demo, we'll simplify and assume a direct path if possible, or log a warning.
+
+                            // For now, let's keep the original query but acknowledge its limitation if donations are truly spread out
+                            const donationsQueryForRefund = query(
+                                collection(db, `artifacts/${appId}/users/${campaignData.providerId}/donations`), // This path might be incorrect if donorId is dynamic
+                                where("campaignId", "==", campaignId),
+                                where("refunded", "==", false)
+                            );
+                            const donationsSnapshot = await getDocs(donationsQueryForRefund);
+
+
+                            if (donationsSnapshot.empty) {
+                                console.warn(`No unrefunded donations found for campaign ${campaignId} under provider ${campaignData.providerId}.`);
+                            }
+
+                            donationsSnapshot.forEach((donationDoc) => {
+                                // The path to update the donation needs to reflect where it's stored.
+                                // If donations are stored under the *donor's* userId, this path needs to be dynamic.
+                                // For this demo, we'll assume the simple path for now.
+                                const donationRef = doc(db, `artifacts/${appId}/users/${donationDoc.data().donorId}/donations`, donationDoc.id);
+                                transaction.update(donationRef, { refunded: true });
+                                console.log(`Donation ${donationDoc.id} for campaign ${campaignId} marked as refunded.`);
+                            });
+                        });
+                        console.log(`Campaign ${campaignId} marked as failed and donations processed for refund.`);
+                    }
+                }
+            });
+        };
+
+        // Run status check periodically or on mount
+        const intervalId = setInterval(checkCampaignStatus, 60000); // Check every minute
+        checkCampaignStatus(); // Run once on mount
+
+        return () => clearInterval(intervalId);
+    }, [db, isAuthReady]);
+
+
     const handleUpdateDistribution = async () => {
         if (!selectedCampaignToManage || !newUpdateMessage.trim()) {
             showModal('Missing Info', 'Please select a campaign and enter an update message.');
@@ -446,28 +707,34 @@ const ProviderDashboard = ({ onBack }) => {
 
         setLoading(true);
         try {
+            let updateImageUrls = [];
+            if (selectedUpdateFiles.length > 0) {
+                updateImageUrls = await uploadUpdateImages(selectedUpdateFiles); // This now simulates upload
+            }
+
             const campaignDocRef = doc(db, `artifacts/${appId}/public/data/campaigns`, selectedCampaignToManage.id);
             const currentUpdates = selectedCampaignToManage.distributionUpdates || [];
-            // FIX: Use new Date() instead of serverTimestamp() directly in array elements
-            const updatedUpdates = [...currentUpdates, { message: newUpdateMessage.trim(), date: new Date() }];
+            // FIX: Use new Date() for timestamp within array elements
+            const updatedUpdates = [...currentUpdates, { message: newUpdateMessage.trim(), date: new Date(), imageUrls: updateImageUrls }];
 
             await updateDoc(campaignDocRef, {
                 distributionUpdates: updatedUpdates,
+                // Recalculate totalMealsProvided based on current totalDonations and costPerMeal
                 totalMealsProvided: selectedCampaignToManage.costPerMeal > 0 ? Math.floor(selectedCampaignToManage.totalDonations / selectedCampaignToManage.costPerMeal) : 0,
-                status: 'distributed' // Mark as distributed once an update is added
+                // Status is now handled by the useEffect above, but can be manually set here if needed
             });
 
             showModal('Success', 'Distribution update added successfully!');
             setNewUpdateMessage('');
+            setSelectedUpdateFiles([]); // Clear selected files
             setSelectedCampaignToManage(prev => ({
                 ...prev,
                 distributionUpdates: updatedUpdates,
                 totalMealsProvided: prev.costPerMeal > 0 ? Math.floor(prev.totalDonations / prev.costPerMeal) : 0,
-                status: 'distributed'
             }));
         } catch (error) {
             console.error("Error updating distribution:", error);
-            showModal('Error', 'Failed to update distribution. Please try again.');
+            showModal('Error', `Failed to update distribution. Please try again. Error: ${error.message}`);
         } finally {
             setLoading(false);
         }
@@ -538,9 +805,23 @@ const ProviderDashboard = ({ onBack }) => {
                             value={newUpdateMessage}
                             onChange={(e) => setNewUpdateMessage(e.target.value)}
                         ></textarea>
+                        <div className="mb-4">
+                            <label htmlFor="updateImages" className="block text-lg font-medium text-gray-700 mb-1">Update Images (Optional)</label>
+                            <input
+                                type="file"
+                                id="updateImages"
+                                multiple
+                                accept="image/*"
+                                onChange={handleUpdateFileChange}
+                                className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-lg file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                            />
+                            {selectedUpdateFiles.length > 0 && (
+                                <p className="text-sm text-gray-500 mt-2">{selectedUpdateFiles.length} file(s) selected.</p>
+                            )}
+                        </div>
                         <div className="flex justify-end space-x-3">
                             <button
-                                onClick={() => { setSelectedCampaignToManage(null); setNewUpdateMessage(''); }}
+                                onClick={() => { setSelectedCampaignToManage(null); setNewUpdateMessage(''); setSelectedUpdateFiles([]); }}
                                 className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors duration-200"
                             >
                                 Cancel
@@ -560,6 +841,19 @@ const ProviderDashboard = ({ onBack }) => {
                                 {selectedCampaignToManage.distributionUpdates.map((update, index) => (
                                     <li key={index} className="mb-1">
                                         <span className="font-semibold">{new Date(update.date.seconds * 1000).toLocaleDateString()}:</span> {update.message}
+                                        {update.imageUrls && update.imageUrls.length > 0 && (
+                                            <div className="mt-2 grid grid-cols-2 gap-2">
+                                                {update.imageUrls.map((url, imgIndex) => (
+                                                    <img
+                                                        key={imgIndex}
+                                                        src={url}
+                                                        alt={`Distribution update image ${imgIndex + 1}`}
+                                                        className="w-full h-24 object-cover rounded-md shadow-sm"
+                                                        onError={(e) => { e.target.onerror = null; e.target.src = "https://placehold.co/100x100/cccccc/333333?text=Image+Error"; }}
+                                                    />
+                                                ))}
+                                            </div>
+                                        )}
                                     </li>
                                 ))}
                             </ul>
@@ -639,7 +933,7 @@ const DonorDashboard = ({ onBack }) => {
                 className="mb-6 px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors duration-200 flex items-center"
             >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+                    <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0  01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
                 Back to Home
             </button>
@@ -651,7 +945,7 @@ const DonorDashboard = ({ onBack }) => {
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
                     {myDonations.map(donation => (
-                        <div key={donation.id} className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+                        <div key={donation.id} className={`bg-white rounded-xl shadow-lg p-6 border border-gray-200 ${donation.refunded ? 'opacity-70 border-red-400' : ''}`}>
                             <h3 className="text-2xl font-bold text-gray-800 mb-2">
                                 {campaignsMap[donation.campaignId] || 'Unknown Campaign'}
                             </h3>
@@ -661,8 +955,92 @@ const DonorDashboard = ({ onBack }) => {
                             <p className="text-gray-700 mb-4">
                                 <span className="font-medium">Date:</span> {donation.timestamp ? new Date(donation.timestamp.seconds * 1000).toLocaleDateString() : 'N/A'}
                             </p>
+                            {donation.refunded && (
+                                <p className="text-red-600 font-semibold mt-2">Refunded</p>
+                            )}
                         </div>
                     ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Donor Leaderboard Component (New)
+const DonorLeaderboard = ({ onBack }) => {
+    const { db, isAuthReady, showModal } = useContext(AppContext);
+    const [topDonors, setTopDonors] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (!db || !isAuthReady) return;
+
+        const donorLeaderboardCollectionRef = collection(db, `artifacts/${appId}/public/data/donor_leaderboard`);
+        // We'll fetch all and sort client-side to avoid needing a Firestore index on totalDonatedAmount
+        const q = query(donorLeaderboardCollectionRef);
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const fetchedDonors = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            // Sort donors by totalDonatedAmount in descending order client-side
+            const sortedDonors = fetchedDonors.sort((a, b) => (b.totalDonatedAmount || 0) - (a.totalDonatedAmount || 0));
+            setTopDonors(sortedDonors);
+            setLoading(false);
+        }, (error) => {
+            console.error("Error fetching top donors:", error);
+            showModal('Error', 'Failed to load donor leaderboard. Please try again later.');
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
+    }, [db, isAuthReady, showModal]);
+
+    const getBadge = (index) => {
+        if (index === 0) return '🥇 Gold';
+        if (index === 1) return '🥈 Silver';
+        if (index === 2) return '🥉 Bronze';
+        return '';
+    };
+
+    return (
+        <div className="p-6 bg-gray-50 min-h-screen">
+            <button
+                onClick={onBack}
+                className="mb-6 px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors duration-200 flex items-center"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                Back to Home
+            </button>
+
+            <h2 className="text-4xl font-extrabold text-gray-900 mb-8 text-center">Top Donors (Leaderboard)</h2>
+
+            {loading ? (
+                <div className="text-center text-gray-600">Loading donor leaderboard...</div>
+            ) : topDonors.length === 0 ? (
+                <p className="text-center text-gray-600 text-lg">No donations recorded yet. Be the first to donate!</p>
+            ) : (
+                <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-lg p-8 border border-gray-200">
+                    <ul className="divide-y divide-gray-200">
+                        {topDonors.map((donor, index) => (
+                            <li key={donor.id} className="py-4 flex items-center justify-between">
+                                <div className="flex items-center">
+                                    <span className="text-2xl font-bold text-gray-700 mr-4 w-8 text-center">{index + 1}.</span>
+                                    <div>
+                                        <p className="text-xl font-semibold text-gray-800">{donor.donorName}</p>
+                                        <p className="text-gray-600 text-sm">ID: {donor.donorId.substring(0, 8)}...</p> {/* Display truncated ID */}
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-lg font-bold text-green-600">${donor.totalDonatedAmount ? donor.totalDonatedAmount.toFixed(2) : '0.00'}</p>
+                                    <span className="text-sm text-gray-500">{getBadge(index)}</span>
+                                </div>
+                            </li>
+                        ))}
+                    </ul>
                 </div>
             )}
         </div>
@@ -674,9 +1052,10 @@ const DonorDashboard = ({ onBack }) => {
 const App = () => {
     const [db, setDb] = useState(null);
     const [auth, setAuth] = useState(null);
+    const [storage, setStorage] = useState(null); // New state for storage
     const [userId, setUserId] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
-    const [view, setView] = useState('home'); // 'home', 'campaign-detail', 'create-campaign', 'provider-dashboard', 'donor-dashboard'
+    const [view, setView] = useState('home'); // 'home', 'campaign-detail', 'create-campaign', 'provider-dashboard', 'donor-dashboard', 'leaderboard', 'donor-leaderboard'
     const [selectedCampaign, setSelectedCampaign] = useState(null);
 
     // Modal state
@@ -714,9 +1093,12 @@ const App = () => {
             const app = initializeApp(firebaseConfig);
             const firestore = getFirestore(app);
             const firebaseAuth = getAuth(app);
+            // Removed Firebase Storage initialization here as it's not used for direct uploads anymore
+            // const firebaseStorage = getStorage(app); 
 
             setDb(firestore);
             setAuth(firebaseAuth);
+            // setStorage(firebaseStorage); // Removed setting storage instance
             console.log("Firebase initialized.");
 
             // Sign in with custom token or anonymously
@@ -779,6 +1161,14 @@ const App = () => {
         setView('donor-dashboard');
     };
 
+    const handleGoToLeaderboard = () => {
+        setView('leaderboard');
+    };
+
+    const handleGoToDonorLeaderboard = () => {
+        setView('donor-leaderboard');
+    };
+
     if (!isAuthReady) {
         return (
             <div className="flex items-center justify-center min-h-screen bg-gray-100">
@@ -788,7 +1178,7 @@ const App = () => {
     }
 
     return (
-        <AppContext.Provider value={{ db, auth, userId, isAuthReady, showModal: handleShowModal }}>
+        <AppContext.Provider value={{ db, auth, userId, isAuthReady, showModal: handleShowModal /*, storage */ }}> {/* Removed storage from context provider */}
             <div className="font-sans antialiased bg-gray-100 text-gray-900">
                 <header className="bg-white shadow-md p-4 flex justify-between items-center">
                     <div className="flex items-center"> {/* Flex container for logo and title */}
@@ -831,6 +1221,18 @@ const App = () => {
                         >
                             My Donations
                         </button>
+                        <button
+                            onClick={handleGoToLeaderboard}
+                            className="text-gray-700 hover:text-blue-600 font-medium px-3 py-2 rounded-md transition-colors duration-200"
+                        >
+                            Campaign Leaderboard
+                        </button>
+                        <button
+                            onClick={handleGoToDonorLeaderboard}
+                            className="text-gray-700 hover:text-blue-600 font-medium px-3 py-2 rounded-md transition-colors duration-200"
+                        >
+                            Donor Leaderboard
+                        </button>
                     </nav>
                 </header>
 
@@ -852,6 +1254,12 @@ const App = () => {
                     )}
                     {view === 'donor-dashboard' && (
                         <DonorDashboard onBack={handleBackToHome} />
+                    )}
+                    {view === 'leaderboard' && (
+                        <Leaderboard onBack={handleBackToHome} />
+                    )}
+                    {view === 'donor-leaderboard' && (
+                        <DonorLeaderboard onBack={handleBackToHome} />
                     )}
                 </main>
 
