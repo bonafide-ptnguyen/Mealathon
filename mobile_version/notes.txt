@@ -1,0 +1,87 @@
+npx @react-native-community/cli init mealathon_mobile
+npm install @react-native-firebase/app @react-native-firebase/firestore @react-native-firebase/auth nativewind
+sudo apt install adb
+sudo apt-get install openjdk-17-jdk
+sudo usermod -a -G plugdev [user]
+[Enable USB Debug options on your phone]
+[Download and install Android Studio]
+nano ~/.basrc
+[Add the following lines at the end]
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export PATH=$PATH:$JAVA_HOME/bin
+export ANDROID_HOME=$HOME/Android/Sdk
+export PATH=$PATH:$ANDROID_HOME/emulator
+export PATH=$PATH:$ANDROID_HOME/platform-tools
+[Save the file and then reload the bash with]
+source ~/.bashrc
+[On the mobile app folder created by line 1]
+cd android/
+chmod +x gradlew
+npx react-native run-android
+[Takes a while, in my case 2 minutes to configure everything on the first try]
+npm install @react-navigation/native
+npm install expo
+npx expo install react-native-screens react-native-safe-area-context react-native-gesture-handler
+npm install @react-navigation/stack
+npm install @react-native-firebase/app @react-native-firebase/auth @react-native-firebase/firestore
+npm install nativewind
+touch tailwind.config.js
+[Inisde tailwind.config.js]
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    "./App.{js,jsx,ts,tsx}",
+    "./src/**/*.{js,jsx,ts,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+};
+[EOF]
+[Inside babel.config.js]
+module.exports = {
+  presets: ['module:metro-react-native-babel-preset'],
+  plugins: ['nativewind/babel'],
+};
+[EOF]
+npx react-native run-android
+[This time it took 5 minutes]
+[Edit build.gradle file inside android folder]
+buildscript {
+    ext {
+        buildToolsVersion = "35.0.0"
+        minSdkVersion = 24
+        compileSdkVersion = 35
+        targetSdkVersion = 35
+        ndkVersion = "25.2.9519653"
+        kotlinVersion = "2.1.20"
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.4.1")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.20")
+    }
+}
+
+apply plugin: "com.facebook.react.rootproject"
+[EOF]
+[Whenever something fails here, write the following]
+cd android/
+./gradlew clean
+cd ..
+npx react-native run-android
+[This should fix the issue]
+[ERROR WITH GCC VERSION]
+
+[THIS IS WHAT REALLY WORKED IN THE END]
+npx create-expo-app mobile_version
+npm install nativewind
+npm install firebase
+npm install tailwindcss@3.4.17 postcss@latest autoprefixer@latest nativewind@latest
+npx tailwindcss init
+
