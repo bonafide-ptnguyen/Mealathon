@@ -59,3 +59,4 @@ Thumbs.db
 firebase-debug.log
 firebase-debug.*.log
 *.env # Catch any other .env files just in case
+.env.local
