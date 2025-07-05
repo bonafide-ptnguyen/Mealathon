@@ -297,7 +297,7 @@ const CampaignDetail = ({ campaign, onBack }) => {
                                 src={url}
                                 alt={`${campaign.campaignName} image ${index + 1}`}
                                 className="w-full h-48 object-cover rounded-lg shadow-sm"
-                                onError={(e) => { e.target.onerror = null; e.target.src = "https://placehold.co/400x200/cccccc/333333?text=No+Image"; }}
+                                onError={(e) => { e.target.onerror = null; e.target.src = "https://placehold.co/400x200/cccccc/333333?text=Image+Error"; }}
                             />
                         ))}
                     </div>
@@ -933,7 +933,7 @@ const DonorDashboard = ({ onBack }) => {
                 className="mb-6 px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors duration-200 flex items-center"
             >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0  01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+                    <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
                 Back to Home
             </button>
@@ -960,6 +960,87 @@ const DonorDashboard = ({ onBack }) => {
                             )}
                         </div>
                     ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Campaign Leaderboard Component
+const Leaderboard = ({ onBack }) => {
+    const { db, isAuthReady, showModal } = useContext(AppContext);
+    const [topCampaigns, setTopCampaigns] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (!db || !isAuthReady) return;
+
+        const campaignsCollectionRef = collection(db, `artifacts/${appId}/public/data/campaigns`);
+        // We'll fetch all and sort client-side to avoid needing a Firestore index on totalDonations
+        const q = query(campaignsCollectionRef);
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const fetchedCampaigns = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            // Sort campaigns by totalDonations in descending order client-side
+            const sortedCampaigns = fetchedCampaigns.sort((a, b) => (b.totalDonations || 0) - (a.totalDonations || 0));
+            setTopCampaigns(sortedCampaigns);
+            setLoading(false);
+        }, (error) => {
+            console.error("Error fetching top campaigns:", error);
+            showModal('Error', 'Failed to load campaign leaderboard. Please try again later.');
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
+    }, [db, isAuthReady, showModal]);
+
+    const getBadge = (index) => {
+        if (index === 0) return '🏆 Gold';
+        if (index === 1) return '🥈 Silver';
+        if (index === 2) return '🥉 Bronze';
+        return '';
+    };
+
+    return (
+        <div className="p-6 bg-gray-50 min-h-screen">
+            <button
+                onClick={onBack}
+                className="mb-6 px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors duration-200 flex items-center"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                Back to Home
+            </button>
+
+            <h2 className="text-4xl font-extrabold text-gray-900 mb-8 text-center">Top Campaigns (Leaderboard)</h2>
+
+            {loading ? (
+                <div className="text-center text-gray-600">Loading campaign leaderboard...</div>
+            ) : topCampaigns.length === 0 ? (
+                <p className="text-center text-gray-600 text-lg">No campaigns to display on the leaderboard yet.</p>
+            ) : (
+                <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-lg p-8 border border-gray-200">
+                    <ul className="divide-y divide-gray-200">
+                        {topCampaigns.map((campaign, index) => (
+                            <li key={campaign.id} className="py-4 flex items-center justify-between">
+                                <div className="flex items-center">
+                                    <span className="text-2xl font-bold text-gray-700 mr-4 w-8 text-center">{index + 1}.</span>
+                                    <div>
+                                        <p className="text-xl font-semibold text-gray-800">{campaign.campaignName}</p>
+                                        <p className="text-gray-600 text-sm">by {campaign.restaurantName}</p>
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-lg font-bold text-green-600">${campaign.totalDonations ? campaign.totalDonations.toFixed(2) : '0.00'}</p>
+                                    <span className="text-sm text-gray-500">{getBadge(index)}</span>
+                                </div>
+                            </li>
+                        ))}
+                    </ul>
                 </div>
             )}
         </div>
